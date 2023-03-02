@@ -87,8 +87,7 @@ func (a *API) ExternalProviderRedirect(w http.ResponseWriter, r *http.Request) e
 		}
 		flowStateID = flowState.ID.String()
 	}
-
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, ExternalProviderClaims{
+	claims := ExternalProviderClaims{
 		NetlifyMicroserviceClaims: NetlifyMicroserviceClaims{
 			StandardClaims: jwt.StandardClaims{
 				ExpiresAt: time.Now().Add(5 * time.Minute).Unix(),
@@ -100,8 +99,9 @@ func (a *API) ExternalProviderRedirect(w http.ResponseWriter, r *http.Request) e
 		InviteToken: inviteToken,
 		Referrer:    redirectURL,
 		FlowStateID: flowStateID,
-	})
-	tokenString, err := token.SignedString([]byte(config.JWT.Secret))
+	}
+
+	tokenString, err := newJWTTokenWithClaims(&config.JWT, claims)
 	if err != nil {
 		return internalServerError("Error creating state").WithInternalError(err)
 	}
