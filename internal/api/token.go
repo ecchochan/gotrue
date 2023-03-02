@@ -259,6 +259,19 @@ func parseJWTToken(bearer string, config *conf.GlobalConfiguration) (*jwt.Token,
 	})
 }
 
+func newJWTTokenWithClaims(config *conf.JWTConfiguration, claims jwt.Claims) (string, error) {
+	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+
+	if config.KeyID != "" {
+		if token.Header == nil {
+			token.Header = make(map[string]interface{})
+		}
+
+		token.Header["kid"] = config.KeyID
+	}
+	return token.SignedString([]byte(config.Secret))
+}
+
 func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *uuid.UUID, config *conf.JWTConfiguration) (string, error) {
 	aal, amr := models.AAL1.String(), []models.AMREntry{}
 	sid := ""
@@ -294,17 +307,7 @@ func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *u
 		AuthenticationMethodReference: amr,
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	if config.KeyID != "" {
-		if token.Header == nil {
-			token.Header = make(map[string]interface{})
-		}
-
-		token.Header["kid"] = config.KeyID
-	}
-
-	return token.SignedString([]byte(config.Secret))
+	return newJWTTokenWithClaims(config, claims)
 }
 
 func (a *API) issueRefreshToken(ctx context.Context, conn *storage.Connection, user *models.User, authenticationMethod models.AuthenticationMethod, grantParams models.GrantParams) (*AccessTokenResponse, error) {
