@@ -628,6 +628,9 @@ func newJWTTokenWithClaims(JWT conf.JWTConfiguration, claims jwt.Claims) (string
 		token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
 		key = []byte(JWT.Secret)
 	}
+	if JWT.Kid != "" {
+		token.Header["kid"] = JWT.Kid
+	}
 	return token.SignedString(key)
 }
 
@@ -646,12 +649,20 @@ func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *u
 		}
 	}
 
+	now := time.Now()
+	standardClaims := jwt.StandardClaims{
+		Subject:   user.ID.String(),
+		Audience:  user.Aud,
+		ExpiresAt: now.Add(expiresIn).Unix(),
+		IssuedAt:  now.Unix(),
+	}
+
+	if config.JWT.Issuer != "" {
+		standardClaims.Issuer = config.JWT.Issuer;
+	}
+
 	claims := &GoTrueClaims{
-		StandardClaims: jwt.StandardClaims{
-			Subject:   user.ID.String(),
-			Audience:  user.Aud,
-			ExpiresAt: time.Now().Add(expiresIn).Unix(),
-		},
+		StandardClaims:                standardClaims,
 		Email:                         user.GetEmail(),
 		Phone:                         user.GetPhone(),
 		AppMetaData:                   user.AppMetaData,
