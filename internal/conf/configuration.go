@@ -54,6 +54,8 @@ func (c *DBConfiguration) Validate() error {
 type JWTConfiguration struct {
 	Secret           string   `json:"secret" required:"true"`
 	SigningMethod    string   `json:"signing_method" split_words:"true"`
+	Issuer           string   `json:"issuer" default:""`
+	Kid              string   `json:"kid" default:""`
 	Pubkey           string   `json:"pubkey"`
 	Exp              int      `json:"exp"`
 	Aud              string   `json:"aud"`
