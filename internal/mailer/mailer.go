@@ -3,7 +3,7 @@ package mailer
 import (
 	"net/url"
 
-	"github.com/netlify/mailme"
+	"github.com/ecchochan/mailme"
 	"github.com/sirupsen/logrus"
 	"github.com/supabase/gotrue/internal/conf"
 	"github.com/supabase/gotrue/internal/models"
