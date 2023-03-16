@@ -448,13 +448,11 @@ func (a *API) verifyUserAndToken(ctx context.Context, conn *storage.Connection, 
 
 	var user *models.User
 	var err error
-	var tokenHash string
 	if isPhoneOtpVerification(params) {
 		params.Phone, err = validatePhone(params.Phone)
 		if err != nil {
 			return nil, err
 		}
-		tokenHash = fmt.Sprintf("%x", sha256.Sum224([]byte(string(params.Phone)+params.Token)))
 		switch params.Type {
 		case phoneChangeVerification:
 			user, err = models.FindUserByPhoneChangeAndAudience(conn, params.Phone, aud)
@@ -468,7 +466,7 @@ func (a *API) verifyUserAndToken(ctx context.Context, conn *storage.Connection, 
 		if err != nil {
 			return nil, unprocessableEntityError("Invalid email format").WithInternalError(err)
 		}
-		tokenHash = fmt.Sprintf("%x", sha256.Sum224([]byte(string(params.Email)+params.Token)))
+		tokenHash := fmt.Sprintf("%x", sha256.Sum224([]byte(string(params.Email)+params.Token)))
 		switch params.Type {
 		case emailChangeVerification:
 			user, err = models.FindUserForEmailChange(conn, params.Email, tokenHash, aud, config.Mailer.SecureEmailChangeEnabled)
@@ -494,26 +492,26 @@ func (a *API) verifyUserAndToken(ctx context.Context, conn *storage.Connection, 
 	switch params.Type {
 	case emailOTPVerification:
 		// if the type is emailOTPVerification, we'll check both the confirmation_token and recovery_token columns
-		if isOtpValid(tokenHash, user.ConfirmationToken, user.ConfirmationSentAt, config.Mailer.OtpExp) {
+		if isOtpValid(params.Token, user.ConfirmationToken, user.ConfirmationSentAt, config.Mailer.OtpExp) {
 			isValid = true
 			params.Type = signupVerification
-		} else if isOtpValid(tokenHash, user.RecoveryToken, user.RecoverySentAt, config.Mailer.OtpExp) {
+		} else if isOtpValid(params.Token, user.RecoveryToken, user.RecoverySentAt, config.Mailer.OtpExp) {
 			isValid = true
 			params.Type = magicLinkVerification
 		} else {
 			isValid = false
 		}
 	case signupVerification, inviteVerification:
-		isValid = isOtpValid(tokenHash, user.ConfirmationToken, user.ConfirmationSentAt, config.Mailer.OtpExp)
+		isValid = isOtpValid(params.Token, user.ConfirmationToken, user.ConfirmationSentAt, config.Mailer.OtpExp)
 	case recoveryVerification, magicLinkVerification:
-		isValid = isOtpValid(tokenHash, user.RecoveryToken, user.RecoverySentAt, config.Mailer.OtpExp)
+		isValid = isOtpValid(params.Token, user.RecoveryToken, user.RecoverySentAt, config.Mailer.OtpExp)
 	case emailChangeVerification:
-		isValid = isOtpValid(tokenHash, user.EmailChangeTokenCurrent, user.EmailChangeSentAt, config.Mailer.OtpExp) ||
-			isOtpValid(tokenHash, user.EmailChangeTokenNew, user.EmailChangeSentAt, config.Mailer.OtpExp)
+		isValid = isOtpValid(params.Token, user.EmailChangeTokenCurrent, user.EmailChangeSentAt, config.Mailer.OtpExp) ||
+			isOtpValid(params.Token, user.EmailChangeTokenNew, user.EmailChangeSentAt, config.Mailer.OtpExp)
 	case phoneChangeVerification:
-		isValid = isOtpValid(tokenHash, user.PhoneChangeToken, user.PhoneChangeSentAt, config.Sms.OtpExp)
+		isValid = isOtpValid(params.Token, user.PhoneChangeToken, user.PhoneChangeSentAt, config.Sms.OtpExp)
 	case smsVerification:
-		isValid = isOtpValid(tokenHash, user.ConfirmationToken, user.ConfirmationSentAt, config.Sms.OtpExp)
+		isValid = isOtpValid(params.Token, user.ConfirmationToken, user.ConfirmationSentAt, config.Sms.OtpExp)
 	}
 
 	if !isValid || err != nil {
