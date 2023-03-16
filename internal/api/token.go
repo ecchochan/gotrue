@@ -359,7 +359,7 @@ func (a *API) RefreshTokenGrant(ctx context.Context, w http.ResponseWriter, r *h
 				return internalServerError(terr.Error())
 			}
 		}
-		tokenString, terr = generateAccessToken(tx, user, newToken.SessionId, time.Second*time.Duration(config.JWT.Exp), config.JWT.Secret)
+		tokenString, terr = generateAccessToken(tx, user, newToken.SessionId, time.Second*time.Duration(config.JWT.Exp), config)
 
 		if terr != nil {
 			return internalServerError("error generating jwt token").WithInternalError(terr)
@@ -577,7 +577,61 @@ func (a *API) IdTokenGrant(ctx context.Context, w http.ResponseWriter, r *http.R
 	return sendJSON(w, http.StatusOK, token)
 }
 
-func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *uuid.UUID, expiresIn time.Duration, secret string) (string, error) {
+func parseJWTTokenWithClaims(bearer string, config *conf.GlobalConfiguration, claims jwt.Claims) (*jwt.Token, error) {
+	p := jwt.Parser{ValidMethods: []string{jwt.SigningMethodHS256.Name, jwt.SigningMethodRS256.Name}}
+	return p.ParseWithClaims(bearer, claims, func(token *jwt.Token) (interface{}, error) {
+		untypedAlg, found := token.Header["alg"]
+		if found {
+			alg, ok := untypedAlg.(string)
+			if ok && alg == "RS256" {
+				pubKey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+				if err != nil {
+					return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+				}
+				return pubKey, nil
+			}
+		}
+		return []byte(config.JWT.Secret), nil
+	})
+}
+
+func parseJWTToken(bearer string, config *conf.GlobalConfiguration) (*jwt.Token, error) {
+	p := jwt.Parser{ValidMethods: []string{jwt.SigningMethodHS256.Name, jwt.SigningMethodRS256.Name}}
+	return p.Parse(bearer, func(token *jwt.Token) (interface{}, error) {
+		untypedAlg, found := token.Header["alg"]
+		if found {
+			alg, ok := untypedAlg.(string)
+			if ok && alg == "RS256" {
+				pubKey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+				if err != nil {
+					return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+				}
+				return pubKey, nil
+			}
+		}
+		return []byte(config.JWT.Secret), nil
+	})
+}
+
+func newJWTTokenWithClaims(JWT conf.JWTConfiguration, claims jwt.Claims) (string, error) {
+	var token *jwt.Token
+	var key interface{}
+	var err error
+	switch JWT.SigningMethod {
+	case "RS256":
+		token = jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		key, err = jwt.ParseRSAPrivateKeyFromPEM([]byte(JWT.Secret))
+		if err != nil {
+			return "", err
+		}
+	default:
+		token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		key = []byte(JWT.Secret)
+	}
+	return token.SignedString(key)
+}
+
+func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *uuid.UUID, expiresIn time.Duration, config *conf.GlobalConfiguration) (string, error) {
 	aal, amr := models.AAL1.String(), []models.AMREntry{}
 	sid := ""
 	if sessionId != nil {
@@ -608,8 +662,7 @@ func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *u
 		AuthenticationMethodReference: amr,
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-	return token.SignedString([]byte(secret))
+	return newJWTTokenWithClaims(config.JWT, claims)
 }
 
 func (a *API) issueRefreshToken(ctx context.Context, conn *storage.Connection, user *models.User, authenticationMethod models.AuthenticationMethod, grantParams models.GrantParams) (*AccessTokenResponse, error) {
@@ -638,7 +691,7 @@ func (a *API) issueRefreshToken(ctx context.Context, conn *storage.Connection, u
 			return terr
 		}
 
-		tokenString, terr = generateAccessToken(tx, user, refreshToken.SessionId, time.Second*time.Duration(config.JWT.Exp), config.JWT.Secret)
+		tokenString, terr = generateAccessToken(tx, user, refreshToken.SessionId, time.Second*time.Duration(config.JWT.Exp), config)
 		if terr != nil {
 			return internalServerError("error generating jwt token").WithInternalError(terr)
 		}
@@ -701,7 +754,7 @@ func (a *API) updateMFASessionAndClaims(r *http.Request, tx *storage.Connection,
 			return err
 		}
 
-		tokenString, terr = generateAccessToken(tx, user, &sessionId, time.Second*time.Duration(config.JWT.Exp), config.JWT.Secret)
+		tokenString, terr = generateAccessToken(tx, user, &sessionId, time.Second*time.Duration(config.JWT.Exp), config)
 
 		if terr != nil {
 			return internalServerError("error generating jwt token").WithInternalError(terr)
