@@ -27,6 +27,7 @@ type GoTrueClaims struct {
 	jwt.StandardClaims
 	Email                         string                 `json:"email"`
 	Phone                         string                 `json:"phone"`
+	Name                          string                 `json:"name"`
 	AppMetaData                   map[string]interface{} `json:"app_metadata"`
 	UserMetaData                  map[string]interface{} `json:"user_metadata"`
 	Role                          string                 `json:"role"`
@@ -726,12 +727,13 @@ func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *u
 	}
 
 	if config.JWT.Issuer != "" {
-		standardClaims.Issuer = config.JWT.Issuer;
+		standardClaims.Issuer = config.JWT.Issuer
 	}
 
 	claims := &GoTrueClaims{
 		StandardClaims:                standardClaims,
 		Email:                         user.GetEmail(),
+		Name:                          user.GetName(),
 		Phone:                         user.GetPhone(),
 		AppMetaData:                   user.AppMetaData,
 		UserMetaData:                  user.UserMetaData,
