@@ -23,6 +23,7 @@ type GoTrueClaims struct {
 	jwt.StandardClaims
 	Email                         string                 `json:"email"`
 	Phone                         string                 `json:"phone"`
+	Name                          string                 `json:"name"`
 	AppMetaData                   map[string]interface{} `json:"app_metadata"`
 	UserMetaData                  map[string]interface{} `json:"user_metadata"`
 	Role                          string                 `json:"role"`
@@ -245,7 +246,116 @@ func (a *API) PKCE(ctx context.Context, w http.ResponseWriter, r *http.Request) 
 	}
 
 	return sendJSON(w, http.StatusOK, token)
+}
 
+func parseJWTTokenWebhookWithClaims(bearer string, config *conf.GlobalConfiguration, claims jwt.Claims) (*jwt.Token, error) {
+	p := jwt.Parser{ValidMethods: []string{jwt.SigningMethodHS256.Name}}
+	return p.ParseWithClaims(bearer, claims, func(token *jwt.Token) (interface{}, error) {
+		return []byte(config.Webhook.Secret), nil
+	})
+}
+
+func parseJWTTokenWithClaims(bearer string, config *conf.GlobalConfiguration, claims jwt.Claims) (*jwt.Token, error) {
+	p := jwt.Parser{ValidMethods: []string{config.JWT.SigningMethod}}
+	return p.ParseWithClaims(bearer, claims, func(token *jwt.Token) (interface{}, error) {
+		// We cannot respect the header here because of CVE-2016-5431 - Key Confusion Attack
+		// https://github.com/ticarpi/jwt_tool/wiki/Known-Exploits-and-Attacks#cve-2016-5431---key-confusion-attack
+		if config.JWT.SigningMethod == "RS256" {
+			pubKey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+			if err != nil {
+				return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+			}
+			return pubKey, nil
+		}
+		if config.JWT.SigningMethod == "ES256" {
+			pubKey, err := jwt.ParseECPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+			if err != nil {
+				return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+			}
+			return pubKey, nil
+		}
+		if config.JWT.SigningMethod == "EdDSA" {
+			pubKey, err := jwt.ParseEdPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+			if err != nil {
+				return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+			}
+			return pubKey, nil
+		}
+		return []byte(config.JWT.Secret), nil
+	})
+}
+
+func parseJWTToken(bearer string, config *conf.GlobalConfiguration) (*jwt.Token, error) {
+	p := jwt.Parser{ValidMethods: []string{config.JWT.SigningMethod}}
+	return p.Parse(bearer, func(token *jwt.Token) (interface{}, error) {
+		// We cannot respect the header here because of CVE-2016-5431 - Key Confusion Attack
+		// https://github.com/ticarpi/jwt_tool/wiki/Known-Exploits-and-Attacks#cve-2016-5431---key-confusion-attack
+		if config.JWT.SigningMethod == "RS256" {
+			pubKey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+			if err != nil {
+				return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+			}
+			return pubKey, nil
+		}
+		if config.JWT.SigningMethod == "ES256" {
+			pubKey, err := jwt.ParseECPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+			if err != nil {
+				return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+			}
+			return pubKey, nil
+		}
+		if config.JWT.SigningMethod == "EdDSA" {
+			pubKey, err := jwt.ParseEdPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+			if err != nil {
+				return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+			}
+			return pubKey, nil
+		}
+		return []byte(config.JWT.Secret), nil
+	})
+}
+
+func newJWTTokenWithClaims(config *conf.JWTConfiguration, claims jwt.Claims) (string, error) {
+	var token *jwt.Token
+	var key interface{}
+	var err error
+	switch config.SigningMethod {
+	case "RS256":
+		token = jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		key, err = jwt.ParseRSAPrivateKeyFromPEM([]byte(config.Secret))
+		if err != nil {
+			return "", err
+		}
+	case "ES256":
+		token = jwt.NewWithClaims(jwt.SigningMethodES256, claims)
+		key, err = jwt.ParseECPrivateKeyFromPEM([]byte(config.Secret))
+		if err != nil {
+			return "", err
+		}
+	case "EdDSA":
+		token = jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+		key, err = jwt.ParseEdPrivateKeyFromPEM([]byte(config.Secret))
+		if err != nil {
+			return "", err
+		}
+	default:
+		token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		key = []byte(config.Secret)
+	}
+
+	if config.KeyID != "" {
+		if token.Header == nil {
+			token.Header = make(map[string]interface{})
+		}
+
+		token.Header["kid"] = config.KeyID
+	}
+
+	signed, err := token.SignedString(key)
+	if err != nil {
+		return "", err
+	}
+	return signed, nil
 }
 
 func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *uuid.UUID, config *conf.JWTConfiguration) (string, int64, error) {
@@ -275,6 +385,7 @@ func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *u
 			Issuer:    config.Issuer,
 		},
 		Email:                         user.GetEmail(),
+		Name:                          user.GetName(),
 		Phone:                         user.GetPhone(),
 		AppMetaData:                   user.AppMetaData,
 		UserMetaData:                  user.UserMetaData,
@@ -284,21 +395,10 @@ func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *u
 		AuthenticationMethodReference: amr,
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	if config.KeyID != "" {
-		if token.Header == nil {
-			token.Header = make(map[string]interface{})
-		}
-
-		token.Header["kid"] = config.KeyID
-	}
-
-	signed, err := token.SignedString([]byte(config.Secret))
+	signed, err := newJWTTokenWithClaims(config, claims)
 	if err != nil {
 		return "", 0, err
 	}
-
 	return signed, expiresAt, nil
 }
 

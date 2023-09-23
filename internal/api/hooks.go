@@ -46,9 +46,10 @@ type webhookClaims struct {
 type Webhook struct {
 	*conf.WebhookConfig
 
-	jwtSecret string
-	claims    jwt.Claims
-	payload   []byte
+	signingMethod string
+	jwtSecret     string
+	claims        jwt.Claims
+	payload       []byte
 }
 
 type WebhookResponse struct {
@@ -137,8 +138,7 @@ func (w *Webhook) trigger() (io.ReadCloser, error) {
 }
 
 func (w *Webhook) generateSignature() (string, error) {
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, w.claims)
-	tokenString, err := token.SignedString([]byte(w.jwtSecret))
+	tokenString, err := newJWTTokenWithClaims(&conf.JWTConfiguration{Secret: w.jwtSecret, SigningMethod: "HS256"}, w.claims)
 	if err != nil {
 		return "", internalServerError("Failed build signing string").WithInternalError(err)
 	}
@@ -162,7 +162,7 @@ func triggerEventHooks(ctx context.Context, conn *storage.Connection, event Hook
 		if !config.Webhook.HasEvent(string(event)) {
 			return nil
 		}
-		return triggerHook(ctx, hookURL, config.Webhook.Secret, conn, event, user, config)
+		return triggerHook(ctx, hookURL, conn, event, user, config)
 	}
 
 	fun := getFunctionHooks(ctx)
@@ -175,7 +175,7 @@ func triggerEventHooks(ctx context.Context, conn *storage.Connection, event Hook
 		if err != nil {
 			return errors.Wrapf(err, "Failed to parse Event Function Hook URL")
 		}
-		err = triggerHook(ctx, hookURL, config.JWT.Secret, conn, event, user, config)
+		err = triggerHook(ctx, hookURL, conn, event, user, config)
 		if err != nil {
 			return err
 		}
@@ -183,7 +183,7 @@ func triggerEventHooks(ctx context.Context, conn *storage.Connection, event Hook
 	return nil
 }
 
-func triggerHook(ctx context.Context, hookURL *url.URL, secret string, conn *storage.Connection, event HookEvent, user *models.User, config *conf.GlobalConfiguration) error {
+func triggerHook(ctx context.Context, hookURL *url.URL, conn *storage.Connection, event HookEvent, user *models.User, config *conf.GlobalConfiguration) error {
 	if !hookURL.IsAbs() {
 		siteURL, err := url.Parse(config.SiteURL)
 		if err != nil {
@@ -224,7 +224,8 @@ func triggerHook(ctx context.Context, hookURL *url.URL, secret string, conn *sto
 
 	w := Webhook{
 		WebhookConfig: &config.Webhook,
-		jwtSecret:     secret,
+		jwtSecret:     config.Webhook.Secret,
+		signingMethod: "HS256",
 		claims:        claims,
 		payload:       data,
 	}
