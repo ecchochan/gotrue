@@ -274,6 +274,13 @@ func parseJWTTokenWithClaims(bearer string, config *conf.GlobalConfiguration, cl
 			}
 			return pubKey, nil
 		}
+		if config.JWT.SigningMethod == "EdDSA" {
+			pubKey, err := jwt.ParseEdPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+			if err != nil {
+				return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+			}
+			return pubKey, nil
+		}
 		return []byte(config.JWT.Secret), nil
 	})
 }
@@ -297,6 +304,13 @@ func parseJWTToken(bearer string, config *conf.GlobalConfiguration) (*jwt.Token,
 			}
 			return pubKey, nil
 		}
+		if config.JWT.SigningMethod == "EdDSA" {
+			pubKey, err := jwt.ParseEdPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+			if err != nil {
+				return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+			}
+			return pubKey, nil
+		}
 		return []byte(config.JWT.Secret), nil
 	})
 }
@@ -315,6 +329,12 @@ func newJWTTokenWithClaims(config *conf.JWTConfiguration, claims jwt.Claims) (st
 	case "ES256":
 		token = jwt.NewWithClaims(jwt.SigningMethodES256, claims)
 		key, err = jwt.ParseECPrivateKeyFromPEM([]byte(config.Secret))
+		if err != nil {
+			return "", err
+		}
+	case "EdDSA":
+		token = jwt.NewWithClaims(jwt.SigningMethodEdDSA, claims)
+		key, err = jwt.ParseEdPrivateKeyFromPEM([]byte(config.Secret))
 		if err != nil {
 			return "", err
 		}
