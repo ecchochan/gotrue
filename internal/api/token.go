@@ -245,7 +245,73 @@ func (a *API) PKCE(ctx context.Context, w http.ResponseWriter, r *http.Request) 
 	}
 
 	return sendJSON(w, http.StatusOK, token)
+}
 
+func parseJWTTokenWithClaims(bearer string, config *conf.GlobalConfiguration, claims jwt.Claims) (*jwt.Token, error) {
+	p := jwt.Parser{ValidMethods: []string{jwt.SigningMethodHS256.Name, jwt.SigningMethodRS256.Name}}
+	return p.ParseWithClaims(bearer, claims, func(token *jwt.Token) (interface{}, error) {
+		untypedAlg, found := token.Header["alg"]
+		if found {
+			alg, ok := untypedAlg.(string)
+			if ok && alg == "RS256" {
+				pubKey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+				if err != nil {
+					return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+				}
+				return pubKey, nil
+			}
+		}
+		return []byte(config.JWT.Secret), nil
+	})
+}
+
+func parseJWTToken(bearer string, config *conf.GlobalConfiguration) (*jwt.Token, error) {
+	p := jwt.Parser{ValidMethods: []string{jwt.SigningMethodHS256.Name, jwt.SigningMethodRS256.Name}}
+	return p.Parse(bearer, func(token *jwt.Token) (interface{}, error) {
+		untypedAlg, found := token.Header["alg"]
+		if found {
+			alg, ok := untypedAlg.(string)
+			if ok && alg == "RS256" {
+				pubKey, err := jwt.ParseRSAPublicKeyFromPEM([]byte(config.JWT.Pubkey))
+				if err != nil {
+					return nil, unauthorizedError("An error occurred parsing the public key base64; this is a code bug")
+				}
+				return pubKey, nil
+			}
+		}
+		return []byte(config.JWT.Secret), nil
+	})
+}
+
+func newJWTTokenWithClaims(config *conf.JWTConfiguration, claims jwt.Claims) (string, error) {
+	var token *jwt.Token
+	var key interface{}
+	var err error
+	switch config.SigningMethod {
+	case "RS256":
+		token = jwt.NewWithClaims(jwt.SigningMethodRS256, claims)
+		key, err = jwt.ParseRSAPrivateKeyFromPEM([]byte(config.Secret))
+		if err != nil {
+			return "", err
+		}
+	default:
+		token = jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
+		key = []byte(config.Secret)
+	}
+
+	if config.KeyID != "" {
+		if token.Header == nil {
+			token.Header = make(map[string]interface{})
+		}
+
+		token.Header["kid"] = config.KeyID
+	}
+
+	signed, err := token.SignedString(key)
+	if err != nil {
+		return "", err
+	}
+	return signed, nil
 }
 
 func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *uuid.UUID, config *conf.JWTConfiguration) (string, int64, error) {
@@ -284,21 +350,10 @@ func generateAccessToken(tx *storage.Connection, user *models.User, sessionId *u
 		AuthenticationMethodReference: amr,
 	}
 
-	token := jwt.NewWithClaims(jwt.SigningMethodHS256, claims)
-
-	if config.KeyID != "" {
-		if token.Header == nil {
-			token.Header = make(map[string]interface{})
-		}
-
-		token.Header["kid"] = config.KeyID
-	}
-
-	signed, err := token.SignedString([]byte(config.Secret))
+	signed, err := newJWTTokenWithClaims(config, claims)
 	if err != nil {
 		return "", 0, err
 	}
-
 	return signed, expiresAt, nil
 }
 
